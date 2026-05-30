@@ -66,11 +66,6 @@ abstract class MdocNfcV2Service(
 ) : NfcApduService(applicationContext, sendResponse) {
     companion object {
         private const val TAG = "MdocNfcV2Service"
-
-        // A job started after NFC engagement completes successfully and
-        // runs until the remote reader disconnects.
-        // This is static to survive service recreations during a single tap session.
-        private var transactionJob: Job? = null
     }
 
     private fun vibrate(pattern: List<Int>) {
@@ -241,10 +236,9 @@ abstract class MdocNfcV2Service(
 
         listenForCancellationFromUiJob = CoroutineScope(Dispatchers.IO).launch {
             settings.presentmentModel?.state?.collect { state ->
-                if (state == PresentmentModel.State.CanceledByUser) {
+                if (settings.presentmentModel?.state?.value == PresentmentModel.State.CanceledByUser) {
                     cancelEngagementJobs()
-                    transactionJob?.cancel()
-                    transactionJob = null
+                    NfcTransactionManager.cancelActiveTransaction()
                     waitForTransportJob?.cancel()
                     waitForTransportJob = null
                 }
@@ -285,27 +279,21 @@ abstract class MdocNfcV2Service(
                     }
                 )
 
-                // NFC deactivation (the reader moving away) and the Service's onDestroy
-                // (as the transaction may continue over BLE and wait for UI consent).
-                if (transactionJob?.isActive == true) {
-                    Logger.i(TAG, "Transaction already in progress, ignoring duplicate handover")
-                    return@MdocNfcV2EngagementHelper
-                }
-                transactionJob = CoroutineScope(Dispatchers.IO + settings.promptModel).launch {
-                    try {
-                        hybridTransport!!.open(eDeviceKey.publicKey)
-                        val duration = Clock.System.now() - timeStarted
-                        startTransaction(
-                            transport = hybridTransport!!,
-                            settings = settings,
-                            connectionMethod = connectionMethod,
-                            encodedDeviceEngagement = encodedDeviceEngagement,
-                            handover = handover,
-                            eDeviceKey = eDeviceKey,
-                            engagementDuration = duration
-                        )
-                    } finally {
-                        transactionJob = null
+                serviceScope.launch {
+                    NfcTransactionManager.tryStartTransaction {
+                        CoroutineScope(Dispatchers.IO + settings.promptModel).launch {
+                            hybridTransport!!.open(eDeviceKey.publicKey)
+                            val duration = Clock.System.now() - timeStarted
+                            startTransaction(
+                                transport = hybridTransport!!,
+                                settings = settings,
+                                connectionMethod = connectionMethod,
+                                encodedDeviceEngagement = encodedDeviceEngagement,
+                                handover = handover,
+                                eDeviceKey = eDeviceKey,
+                                engagementDuration = duration
+                            )
+                        }
                     }
                 }
             },

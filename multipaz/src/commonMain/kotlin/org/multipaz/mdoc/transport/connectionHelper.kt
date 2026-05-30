@@ -62,9 +62,16 @@ suspend fun List<MdocTransport>.waitForConnection(
     val resultingTransportLock = Mutex()
     var resultingTransport: MdocTransport? = null
 
-    // Deduplicate transports by their connection method to avoid multiple parallel attempts
+    // Deduplicate transports by their connection method UUID to avoid multiple parallel attempts
     // to the same target, which causes issues with the Bluetooth stack.
-    val uniqueTransports = this.distinctBy { it.connectionMethod.toString() }
+    val uniqueTransports = this.distinctBy { transport ->
+        val method = transport.connectionMethod
+        if (method is org.multipaz.mdoc.connectionmethod.MdocConnectionMethodBle) {
+            method.centralClientModeUuid?.toString() ?: method.peripheralServerModeUuid?.toString() ?: method.toString()
+        } else {
+            method.toString()
+        }
+    }
 
     uniqueTransports.forEach { transport ->
         check(

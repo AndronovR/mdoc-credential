@@ -67,11 +67,6 @@ abstract class MdocNdefService(
 ) : NfcApduService(applicationContext, sendResponse) {
     companion object {
         private const val TAG = "MdocNdefService"
-
-        // A job started after NFC engagement completes successfully and
-        // runs until the remote reader disconnects.
-        // This is static to survive service recreations during a single tap session.
-        private var transactionJob: Job? = null
     }
 
     private fun vibrate(pattern: List<Int>) {
@@ -250,10 +245,9 @@ abstract class MdocNdefService(
 
         listenForCancellationFromUiJob = CoroutineScope(Dispatchers.IO).launch {
             settings.presentmentModel?.state?.collect { state ->
-                if (state == PresentmentModel.State.CanceledByUser) {
+                if (settings.presentmentModel?.state?.value == PresentmentModel.State.CanceledByUser) {
                     cancelEngagementJobs()
-                    transactionJob?.cancel()
-                    transactionJob = null
+                    NfcTransactionManager.cancelActiveTransaction()
                 }
             }
         }
@@ -343,27 +337,21 @@ abstract class MdocNdefService(
                     applicationContext.startActivity(intent)
                 }
 
-        // NFC deactivation (the reader moving away) and the Service's onDestroy
-        // (as the transaction may continue over BLE and wait for UI consent).
-        if (transactionJob?.isActive == true) {
-            Logger.i(TAG, "Transaction already in progress, ignoring duplicate handover")
-            return@MdocNfcEngagementHelper
-        }
-        transactionJob = CoroutineScope(Dispatchers.IO + settings.promptModel).launch {
-            try {
-                val duration = Clock.System.now() - timeStarted
-                startTransaction(
-                    settings = settings,
-                    connectionMethods = connectionMethods,
-                    encodedDeviceEngagement = encodedDeviceEngagement,
-                    handover = handover,
-                    eDeviceKey = eDeviceKey,
-                    engagementDuration = duration
-                )
-            } finally {
-                transactionJob = null
-            }
-        }
+                serviceScope.launch {
+                    NfcTransactionManager.tryStartTransaction {
+                        CoroutineScope(Dispatchers.IO + settings.promptModel).launch {
+                            val duration = Clock.System.now() - timeStarted
+                            startTransaction(
+                                settings = settings,
+                                connectionMethods = connectionMethods,
+                                encodedDeviceEngagement = encodedDeviceEngagement,
+                                handover = handover,
+                                eDeviceKey = eDeviceKey,
+                                engagementDuration = duration
+                            )
+                        }
+                    }
+                }
     },
             onError = { error ->
                 // Engagement failed. This can happen if a NDEF tag reader - for example another unlocked
