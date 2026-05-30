@@ -5,6 +5,9 @@ import org.jetbrains.kotlin.gradle.ExperimentalKotlinGradlePluginApi
 import org.jetbrains.kotlin.gradle.ExperimentalWasmDsl
 import org.jetbrains.kotlin.gradle.dsl.JvmTarget
 
+import java.text.SimpleDateFormat
+import java.util.Date
+
 plugins {
     alias(libs.plugins.kotlinMultiplatform)
     alias(libs.plugins.androidApplication)
@@ -25,11 +28,14 @@ val disableWebTargets = project.properties["disable.web.targets"]?.toString()?.t
 // "Associated Domains"
 val applinkHost = "apps.multipaz.org"
 
+val buildTime = SimpleDateFormat("yyyy-MM-dd HH:mm:ss").format(Date())
+
 buildConfig {
     packageName("org.multipaz.testapp")
     buildConfigField("TEST_APP_UPDATE_URL", System.getenv("TEST_APP_UPDATE_URL") ?: "")
     buildConfigField("TEST_APP_UPDATE_WEBSITE_URL", System.getenv("TEST_APP_UPDATE_WEBSITE_URL") ?: "")
     buildConfigField("APPLINK_HOST", applinkHost)
+    buildConfigField("BUILD_TIME", buildTime)
     useKotlinOutput { internalVisibility = false }
 }
 

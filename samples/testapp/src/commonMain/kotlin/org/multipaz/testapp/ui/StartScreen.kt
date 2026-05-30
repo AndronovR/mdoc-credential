@@ -15,6 +15,7 @@ import androidx.compose.runtime.rememberCoroutineScope
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.unit.dp
 import kotlinx.coroutines.launch
+import org.multipaz.testapp.BuildConfig
 import org.multipaz.compose.cards.InfoCard
 import org.multipaz.compose.cards.WarningCard
 import org.multipaz.compose.permissions.rememberBluetoothPermissionState
@@ -76,7 +77,7 @@ fun StartScreen(
                 InfoCard(
                     modifier = Modifier.padding(8.dp)
                 ) {
-                    Text("Fork by AndronovR: Added BLE L2CAP PSM fixes and deduplication.")
+                    Text("Fork by AndronovR: Added BLE L2CAP PSM fixes and deduplication. Build time: ${BuildConfig.BUILD_TIME}")
                 }
                 AppUpdateCard()
                 if (documentInfos.isEmpty()) {
