@@ -73,6 +73,11 @@ fun StartScreen(
             modifier = Modifier.padding(8.dp)
         ) {
             Column {
+                InfoCard(
+                    modifier = Modifier.padding(8.dp)
+                ) {
+                    Text("Fork by AndronovR: Added BLE L2CAP PSM fixes and deduplication.")
+                }
                 AppUpdateCard()
                 if (documentInfos.isEmpty()) {
                     WarningCard(
