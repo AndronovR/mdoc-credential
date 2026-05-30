@@ -312,8 +312,6 @@ internal class BleCentralManagerAndroid : BleCentralManager {
                             )
                         } else {
                             Logger.i(TAG, "L2CAP PSM characteristic value: [${value.toHex()}]")
-                            // Prevent processing the same read twice if gatt callback triggers twice
-                            clearWaitCondition()
                             
                             if (value.size == 2) {
                                 val psmBe = ((value[0].toInt() and 0xff) shl 8) or (value[1].toInt() and 0xff)
@@ -348,8 +346,7 @@ internal class BleCentralManagerAndroid : BleCentralManager {
                                 return
                             }
                             Logger.i(TAG, "L2CAP PSM is $_l2capPsm")
-                            val continuation = waitFor?.continuation
-                            continuation?.resume(true)
+                            resumeWait()
                         }
                     } else {
                         Logger.w(TAG, "onCharacteristicRead for L2CAP PSM but not waiting")
