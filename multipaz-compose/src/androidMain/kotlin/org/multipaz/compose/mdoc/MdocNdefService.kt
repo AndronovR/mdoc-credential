@@ -176,7 +176,6 @@ abstract class MdocNdefService(
         super.onCreate()
 
         engagement = null
-        transactionJob = null
 
         // Start a coroutine on an I/O thread for handling incoming APDUs and deactivation events
         // from the OS in processCommandApdu() and onDeactivated() overrides. This is so we can
