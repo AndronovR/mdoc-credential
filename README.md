@@ -1,3 +1,10 @@
+# Multipaz (Fork by AndronovR)
+
+This is a fork of the [original Multipaz repository](https://github.com/openwallet-foundation/multipaz) by AndronovR.
+It contains custom fixes for BLE L2CAP PSM parsing, connection deduplication, and other improvements for specific scanner hardware.
+
+---
+
 # Multipaz
 
 This repository contains libraries and applications for working with real-world
