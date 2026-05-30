@@ -285,7 +285,6 @@ abstract class MdocNfcV2Service(
                     }
                 )
 
-                // We launch transactionJob in a new detached scope so it survives both
                 // NFC deactivation (the reader moving away) and the Service's onDestroy
                 // (as the transaction may continue over BLE and wait for UI consent).
                 if (transactionJob?.isActive == true) {

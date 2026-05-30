@@ -343,29 +343,28 @@ abstract class MdocNdefService(
                     applicationContext.startActivity(intent)
                 }
 
-                // We launch transactionJob in a new detached scope so it survives both
-                // NFC deactivation (the reader moving away) and the Service's onDestroy
-                // (as the transaction may continue over BLE and wait for UI consent).
-                if (transactionJob?.isActive == true) {
-                    Logger.i(TAG, "Transaction already in progress, ignoring duplicate handover")
-                    return@MdocNfcEngagementHelper
-                }
-                transactionJob = CoroutineScope(Dispatchers.IO + settings.promptModel).launch {
-                    try {
-                        val duration = Clock.System.now() - timeStarted
-                        startTransaction(
-                            settings = settings,
-                            connectionMethods = connectionMethods,
-                            encodedDeviceEngagement = encodedDeviceEngagement,
-                            handover = handover,
-                            eDeviceKey = eDeviceKey,
-                            engagementDuration = duration
-                        )
-                    } finally {
-                        transactionJob = null
-                    }
-                }
-            },
+        // NFC deactivation (the reader moving away) and the Service's onDestroy
+        // (as the transaction may continue over BLE and wait for UI consent).
+        if (transactionJob?.isActive == true) {
+            Logger.i(TAG, "Transaction already in progress, ignoring duplicate handover")
+            return@MdocNfcEngagementHelper
+        }
+        transactionJob = CoroutineScope(Dispatchers.IO + settings.promptModel).launch {
+            try {
+                val duration = Clock.System.now() - timeStarted
+                startTransaction(
+                    settings = settings,
+                    connectionMethods = connectionMethods,
+                    encodedDeviceEngagement = encodedDeviceEngagement,
+                    handover = handover,
+                    eDeviceKey = eDeviceKey,
+                    engagementDuration = duration
+                )
+            } finally {
+                transactionJob = null
+            }
+        }
+    },
             onError = { error ->
                 // Engagement failed. This can happen if a NDEF tag reader - for example another unlocked
                 // Android device - is reading this device. So we really don't want any user-visible side-effects
