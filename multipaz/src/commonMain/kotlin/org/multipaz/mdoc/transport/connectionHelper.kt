@@ -29,7 +29,10 @@ suspend fun List<MdocConnectionMethod>.advertise(
     options: MdocTransportOptions
 ): List<MdocTransport> {
     val transports = mutableListOf<MdocTransport>()
-    for (connectionMethod in this) {
+    // Deduplicate connection methods to avoid trying to open the same connection twice
+    // if the reader advertised it multiple times.
+    val uniqueMethods = this.distinctBy { it.toString() }
+    for (connectionMethod in uniqueMethods) {
         val transport = transportFactory.createTransport(
             connectionMethod,
             role,
@@ -59,7 +62,11 @@ suspend fun List<MdocTransport>.waitForConnection(
     val resultingTransportLock = Mutex()
     var resultingTransport: MdocTransport? = null
 
-    forEach { transport ->
+    // Deduplicate transports by their connection method to avoid multiple parallel attempts
+    // to the same target, which causes issues with the Bluetooth stack.
+    val uniqueTransports = this.distinctBy { it.connectionMethod.toString() }
+
+    uniqueTransports.forEach { transport ->
         check(
             transport.state.value == MdocTransport.State.ADVERTISING ||
                     transport.state.value == MdocTransport.State.IDLE
@@ -73,7 +80,7 @@ suspend fun List<MdocTransport>.waitForConnection(
     //     want to return early when it switches to CONNECTING. Therefore
     //   - launch a coroutine to watch the state switching to CONNECTED, CONNECTING, FAILED, or CLOSED
     coroutineScope {
-        forEach { transport ->
+        uniqueTransports.forEach { transport ->
             // MdocTransport.open() doesn't return until state is CONNECTED which is much later than
             // when we're seeing a connection attempt (when state is CONNECTING)
             //
@@ -118,7 +125,7 @@ suspend fun List<MdocTransport>.waitForConnection(
         }
     }
     if (resultingTransport == null) {
-        throw IllegalStateException("Unexpected resultingTransport is null")
+        throw MdocTransportException("No transport was connected")
     }
     return resultingTransport
 }

@@ -188,7 +188,6 @@ kotlin {
         }
 
         val androidInstrumentedTest by getting {
-            dependsOn(commonTest)
             dependencies {
                 implementation(libs.bouncy.castle.bcprov)
                 implementation(libs.bouncy.castle.bcpkix)

@@ -422,7 +422,11 @@ internal class BlePeripheralManagerAndroid: BlePeripheralManager {
     }
 
     override suspend fun advertiseService(uuid: UUID) {
-        gattServer = bluetoothManager.openGattServer(applicationContext, gattServerCallback)
+        try {
+            gattServer = bluetoothManager.openGattServer(applicationContext, gattServerCallback)
+        } catch (e: SecurityException) {
+            throw e
+        }
         service = BluetoothGattService(
             uuid.toJavaUuid(),
             BluetoothGattService.SERVICE_TYPE_PRIMARY
@@ -490,7 +494,11 @@ internal class BlePeripheralManagerAndroid: BlePeripheralManager {
         Logger.d(TAG, "Started advertising UUID $uuid")
         suspendCancellableCoroutine<Boolean> { continuation ->
             setWaitCondition(WaitState.START_ADVERTISING, continuation)
-            advertiser!!.startAdvertising(settings, data, advertiseCallback)
+            try {
+                advertiser!!.startAdvertising(settings, data, advertiseCallback)
+            } catch (e: SecurityException) {
+                resumeWaitWithException(e)
+            }
         }
     }
 
@@ -571,7 +579,11 @@ internal class BlePeripheralManagerAndroid: BlePeripheralManager {
     override fun close() {
         Logger.d(TAG, "close()")
         device = null
-        advertiser?.stopAdvertising(advertiseCallback)
+        try {
+            advertiser?.stopAdvertising(advertiseCallback)
+        } catch (e: SecurityException) {
+            Logger.w(TAG, "Caught SecurityException while stopping advertising", e)
+        }
         advertiser = null
         gattServer?.removeService(service)
         gattServer?.close()

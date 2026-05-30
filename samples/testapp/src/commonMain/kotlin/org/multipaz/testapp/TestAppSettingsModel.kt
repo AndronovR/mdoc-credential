@@ -145,11 +145,11 @@ class TestAppSettingsModel private constructor(
     //
 
     private suspend fun init() {
-        bind(presentmentBleCentralClientModeEnabled, "presentmentBleCentralClientModeEnabled", false)
+        bind(presentmentBleCentralClientModeEnabled, "presentmentBleCentralClientModeEnabled", true)
         bind(presentmentBlePeripheralServerModeEnabled, "presentmentBlePeripheralServerModeEnabled", true)
         bind(presentmentNfcDataTransferEnabled, "presentmentNfcDataTransferEnabled", false)
         bind(presentmentSessionEncryptionCurve, "presentmentSessionEncryptionCurve", EcCurve.P256)
-        bind(presentmentBleL2CapEnabled, "presentmentBleL2CapEnabled", false)
+        bind(presentmentBleL2CapEnabled, "presentmentBleL2CapEnabled", true)
         bind(presentmentBleL2CapInEngagementEnabled, "presentmentBleL2CapInEngagementEnabled", true)
         bind(presentmentUseNegotiatedHandover, "presentmentUseNegotiatedHandover", true)
         bind(presentmentNegotiatedHandoverPreferredOrder, "presentmentNegotiatedHandoverPreferredOrder",
@@ -166,7 +166,7 @@ class TestAppSettingsModel private constructor(
         bind(readerBleCentralClientModeEnabled, "readerBleCentralClientModeEnabled", true)
         bind(readerBlePeripheralServerModeEnabled, "readerBlePeripheralServerModeEnabled", true)
         bind(readerNfcDataTransferEnabled, "readerNfcDataTransferEnabled", true)
-        bind(readerBleL2CapEnabled, "readerBleL2CapEnabled", false)
+        bind(readerBleL2CapEnabled, "readerBleL2CapEnabled", true)
         bind(readerBleL2CapInEngagementEnabled, "readerBleL2CapInEngagementEnabled", true)
         bind(readerAutomaticallySelectTransport, "readerAutomaticallySelectTransport", false)
         bind(readerAllowMultipleRequests, "readerAllowMultipleRequests", false)
@@ -185,23 +185,29 @@ class TestAppSettingsModel private constructor(
         bind(signRequest, "signRequest", true)
     }
 
-    val presentmentBleCentralClientModeEnabled = MutableStateFlow<Boolean>(false)
-    val presentmentBlePeripheralServerModeEnabled = MutableStateFlow<Boolean>(false)
+    val presentmentBleCentralClientModeEnabled = MutableStateFlow<Boolean>(true)
+    val presentmentBlePeripheralServerModeEnabled = MutableStateFlow<Boolean>(true)
     val presentmentNfcDataTransferEnabled = MutableStateFlow<Boolean>(false)
     val presentmentSessionEncryptionCurve = MutableStateFlow<EcCurve>(EcCurve.P256)
-    val presentmentBleL2CapEnabled = MutableStateFlow<Boolean>(false)
-    val presentmentBleL2CapInEngagementEnabled = MutableStateFlow<Boolean>(false)
-    val presentmentUseNegotiatedHandover = MutableStateFlow<Boolean>(false)
-    val presentmentNegotiatedHandoverPreferredOrder = MutableStateFlow<List<String>>(listOf())
-    val presentmentShowConsentPrompt = MutableStateFlow<Boolean>(false)
-    val presentmentRequireAuthentication = MutableStateFlow<Boolean>(false)
+    val presentmentBleL2CapEnabled = MutableStateFlow<Boolean>(true)
+    val presentmentBleL2CapInEngagementEnabled = MutableStateFlow<Boolean>(true)
+    val presentmentUseNegotiatedHandover = MutableStateFlow<Boolean>(true)
+    val presentmentNegotiatedHandoverPreferredOrder = MutableStateFlow<List<String>>(
+        listOf(
+            "ble:central_client_mode:",
+            "ble:peripheral_server_mode:",
+            "nfc:"
+        )
+    )
+    val presentmentShowConsentPrompt = MutableStateFlow<Boolean>(true)
+    val presentmentRequireAuthentication = MutableStateFlow<Boolean>(true)
     val presentmentPreferSignatureToKeyAgreement = MutableStateFlow<Boolean>(false)
 
-    val readerBleCentralClientModeEnabled = MutableStateFlow<Boolean>(false)
-    val readerBlePeripheralServerModeEnabled = MutableStateFlow<Boolean>(false)
-    val readerNfcDataTransferEnabled = MutableStateFlow<Boolean>(false)
-    val readerBleL2CapEnabled = MutableStateFlow<Boolean>(false)
-    val readerBleL2CapInEngagementEnabled = MutableStateFlow<Boolean>(false)
+    val readerBleCentralClientModeEnabled = MutableStateFlow<Boolean>(true)
+    val readerBlePeripheralServerModeEnabled = MutableStateFlow<Boolean>(true)
+    val readerNfcDataTransferEnabled = MutableStateFlow<Boolean>(true)
+    val readerBleL2CapEnabled = MutableStateFlow<Boolean>(true)
+    val readerBleL2CapInEngagementEnabled = MutableStateFlow<Boolean>(true)
     val readerAutomaticallySelectTransport = MutableStateFlow<Boolean>(false)
     val readerAllowMultipleRequests = MutableStateFlow<Boolean>(false)
     val readerLastSelectedRequestId = MutableStateFlow<String?>(null)

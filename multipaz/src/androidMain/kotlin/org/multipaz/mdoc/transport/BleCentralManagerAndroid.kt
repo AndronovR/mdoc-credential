@@ -78,6 +78,8 @@ internal class BleCentralManagerAndroid : BleCentralManager {
         identCharacteristicUuid: UUID?,
         l2capUuid: UUID?,
     ) {
+        Logger.i(TAG, "setUuids: state=$stateCharacteristicUuid c2s=$client2ServerCharacteristicUuid " +
+                "s2c=$server2ClientCharacteristicUuid ident=$identCharacteristicUuid l2cap=$l2capUuid")
         this.stateCharacteristicUuid = stateCharacteristicUuid
         this.client2ServerCharacteristicUuid = client2ServerCharacteristicUuid
         this.server2ClientCharacteristicUuid = server2ClientCharacteristicUuid
@@ -127,15 +129,19 @@ internal class BleCentralManagerAndroid : BleCentralManager {
     }
 
     private fun resumeWait() {
-        val continuation = waitFor!!.continuation
-        waitFor = null
-        continuation.resume(true)
+        waitFor?.let {
+            val continuation = it.continuation
+            waitFor = null
+            continuation.resume(true)
+        }
     }
 
     private fun resumeWaitWithException(exception: Throwable) {
-        val continuation = waitFor!!.continuation
-        waitFor = null
-        continuation.resumeWithException(exception)
+        waitFor?.let {
+            val continuation = it.continuation
+            waitFor = null
+            continuation.resumeWithException(exception)
+        }
     }
 
     override val incomingMessages = Channel<ByteArray>(Channel.UNLIMITED)
@@ -295,7 +301,7 @@ internal class BleCentralManagerAndroid : BleCentralManager {
         ) {
             Logger.d(
                 TAG,
-                "onCharacteristicRead: characteristic=${characteristic.uuid} value=[${value.size} bytes] status=$status"
+                "onCharacteristicRead: characteristic=${characteristic.uuid} value=[${value.toHex()}] status=$status"
             )
             try {
                 if (characteristic.uuid == l2capCharacteristicUuid?.toJavaUuid()) {
@@ -305,14 +311,45 @@ internal class BleCentralManagerAndroid : BleCentralManager {
                                 IllegalStateException("onCharacteristicRead: Expected GATT_SUCCESS but got $status")
                             )
                         } else {
-                            if (value.size != 4) {
+                            Logger.i(TAG, "L2CAP PSM characteristic value: [${value.toHex()}]")
+                            // Prevent processing the same read twice if gatt callback triggers twice
+                            clearWaitCondition()
+                            
+                            if (value.size == 2) {
+                                val psmBe = ((value[0].toInt() and 0xff) shl 8) or (value[1].toInt() and 0xff)
+                                val psmLe = ((value[1].toInt() and 0xff) shl 8) or (value[0].toInt() and 0xff)
+                                if (psmBe in 1..255) {
+                                    _l2capPsm = psmBe
+                                    Logger.i(TAG, "L2CAP PSM parsed as Big-Endian: $_l2capPsm")
+                                } else {
+                                    _l2capPsm = psmLe
+                                    Logger.i(TAG, "L2CAP PSM parsed as Little-Endian: $_l2capPsm")
+                                }
+                            } else if (value.size == 4) {
+                                val psmBe = ((value[0].toInt() and 0xff) shl 24) or
+                                        ((value[1].toInt() and 0xff) shl 16) or
+                                        ((value[2].toInt() and 0xff) shl 8) or
+                                        (value[3].toInt() and 0xff)
+                                val psmLe = ((value[3].toInt() and 0xff) shl 24) or
+                                        ((value[2].toInt() and 0xff) shl 16) or
+                                        ((value[1].toInt() and 0xff) shl 8) or
+                                        (value[0].toInt() and 0xff)
+                                if (psmBe in 1..255) {
+                                    _l2capPsm = psmBe
+                                    Logger.i(TAG, "L2CAP PSM parsed as Big-Endian: $_l2capPsm")
+                                } else {
+                                    _l2capPsm = psmLe
+                                    Logger.i(TAG, "L2CAP PSM parsed as Little-Endian: $_l2capPsm")
+                                }
+                            } else {
                                 resumeWaitWithException(
-                                    IllegalStateException("onCharacteristicRead: Expected four bytes for PSM, got ${value.size}")
+                                    IllegalStateException("onCharacteristicRead: Expected two or four bytes for PSM, got ${value.size}")
                                 )
+                                return
                             }
-                            _l2capPsm = value.getUInt32(0).toInt()
                             Logger.i(TAG, "L2CAP PSM is $_l2capPsm")
-                            resumeWait()
+                            val continuation = waitFor?.continuation
+                            continuation?.resume(true)
                         }
                     } else {
                         Logger.w(TAG, "onCharacteristicRead for L2CAP PSM but not waiting")
@@ -495,12 +532,20 @@ internal class BleCentralManagerAndroid : BleCentralManager {
                         .setCallbackType(ScanSettings.CALLBACK_TYPE_ALL_MATCHES)
                         .setScanMode(ScanSettings.SCAN_MODE_LOW_LATENCY)
                         .build()
-                    bluetoothManager.adapter.bluetoothLeScanner
-                        .startScan(listOf(filter), settings, scanCallback)
+                    try {
+                        bluetoothManager.adapter.bluetoothLeScanner
+                            .startScan(listOf(filter), settings, scanCallback)
+                    } catch (e: SecurityException) {
+                        resumeWaitWithException(e)
+                    }
                 }
                 true
             }
-            bluetoothManager.adapter.bluetoothLeScanner.stopScan(scanCallback)
+            try {
+                bluetoothManager.adapter.bluetoothLeScanner.stopScan(scanCallback)
+            } catch (e: SecurityException) {
+                Logger.w(TAG, "Caught SecurityException while stopping scan", e)
+            }
             if (rc != null) {
                 break
             }
@@ -535,11 +580,18 @@ internal class BleCentralManagerAndroid : BleCentralManager {
             try {
                 suspendCancellableCoroutine<Boolean> { continuation ->
                     setWaitCondition(WaitState.CONNECT_TO_PERIPHERAL, continuation)
-                    gatt = device!!.connectGatt(applicationContext, false, gattCallback, BluetoothDevice.TRANSPORT_LE)
+                    try {
+                        gatt = device!!.connectGatt(applicationContext, false, gattCallback, BluetoothDevice.TRANSPORT_LE)
+                    } catch (e: SecurityException) {
+                        resumeWaitWithException(e)
+                    }
                 }
                 break
-            } catch (error: ConnectionFailedException) {
-                if (retryCount < 10) {
+            } catch (error: Exception) {
+                if (error is SecurityException) {
+                    throw error
+                }
+                if (error is ConnectionFailedException && retryCount < 10) {
                     retryCount++
                     Logger.w(TAG, "Failed connecting to peripheral after $retryCount attempt(s), retrying in 500 msec")
                     delay(500.milliseconds)
@@ -589,17 +641,21 @@ internal class BleCentralManagerAndroid : BleCentralManager {
         if (characteristicServer2Client == null) {
             throw IllegalStateException("Server2Client characteristic not found")
         }
+        Logger.i(TAG, "Found required GATT characteristics")
         if (identCharacteristicUuid != null) {
             characteristicIdent = service!!.getCharacteristic(identCharacteristicUuid!!.toJavaUuid())
             if (characteristicIdent == null) {
-                throw IllegalStateException("Ident characteristic not found")
+                Logger.w(TAG, "Ident characteristic requested but not found")
+            } else {
+                Logger.i(TAG, "Ident characteristic found")
             }
         }
         if (l2capCharacteristicUuid != null) {
             characteristicL2cap = service!!.getCharacteristic(l2capCharacteristicUuid!!.toJavaUuid())
             if (characteristicL2cap == null) {
-                Logger.i(TAG, "L2CAP characteristic requested but not found")
+                Logger.i(TAG, "L2CAP characteristic ($l2capCharacteristicUuid) requested but not found")
             } else {
+                Logger.i(TAG, "L2CAP characteristic found, reading PSM...")
                 suspendCancellableCoroutine<Boolean> { continuation ->
                     setWaitCondition(WaitState.GET_L2CAP_PSM, continuation)
                     gatt!!.readCharacteristic(characteristicL2cap)
@@ -718,7 +774,11 @@ internal class BleCentralManagerAndroid : BleCentralManager {
 
     override fun close() {
         Logger.d(TAG, "close()")
-        bluetoothManager.adapter.bluetoothLeScanner.stopScan(scanCallback)
+        try {
+            bluetoothManager.adapter.bluetoothLeScanner.stopScan(scanCallback)
+        } catch (e: SecurityException) {
+            Logger.w(TAG, "Caught SecurityException while stopping scan", e)
+        }
         gatt?.disconnect()
         gatt?.close()
         gatt = null
@@ -798,6 +858,7 @@ internal class BleCentralManagerAndroid : BleCentralManager {
 
     @RequiresApi(api = Build.VERSION_CODES.Q)
     private suspend fun connectL2capQ(psm: Int) {
+        Logger.i(TAG, "Attempting to open L2CAP channel to PSM $psm")
         callWithRetry(
             action = {
                 l2capSocket = device!!.createInsecureL2capChannel(psm)

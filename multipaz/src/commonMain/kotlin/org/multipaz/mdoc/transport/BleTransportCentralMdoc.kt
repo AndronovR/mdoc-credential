@@ -117,7 +117,8 @@ internal class BleTransportCentralMdoc(
                     centralManager.requestMtu()
                     centralManager.peripheralDiscoverServices(uuid)
                     centralManager.peripheralDiscoverCharacteristics()
-                    centralManager.checkReaderIdentMatches(eSenderKey)
+                    // NOTE: Reader ident characteristic isn't verified because mdoc central client mode
+                    // usually doesn't have the reader's key yet.
                     if (centralManager.l2capPsm != null) {
                         centralManager.connectL2cap(centralManager.l2capPsm!!)
                     } else {

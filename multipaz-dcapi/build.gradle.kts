@@ -99,7 +99,6 @@ kotlin {
         }
 
         val androidInstrumentedTest by getting {
-            dependsOn(commonTest)
             dependencies {
                 implementation(project(":multipaz-dcapi:matcherTest"))
                 implementation(libs.androidx.espresso.core)

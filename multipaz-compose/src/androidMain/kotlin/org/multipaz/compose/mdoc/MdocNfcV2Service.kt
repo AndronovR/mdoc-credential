@@ -1,8 +1,11 @@
 package org.multipaz.compose.mdoc
 
+import android.Manifest
 import android.app.Activity
 import android.content.Context
 import android.content.Intent
+import android.content.pm.PackageManager
+import android.os.Build
 import android.os.Bundle
 import android.os.VibrationEffect
 import android.os.Vibrator
@@ -63,6 +66,11 @@ abstract class MdocNfcV2Service(
 ) : NfcApduService(applicationContext, sendResponse) {
     companion object {
         private const val TAG = "MdocNfcV2Service"
+
+        // A job started after NFC engagement completes successfully and
+        // runs until the remote reader disconnects.
+        // This is static to survive service recreations during a single tap session.
+        private var transactionJob: Job? = null
     }
 
     private fun vibrate(pattern: List<Int>) {
@@ -92,8 +100,6 @@ abstract class MdocNfcV2Service(
 
     // A job started after NFC engagement completes successfully and
     // runs until the remote reader disconnects.
-    private var transactionJob: Job? = null
-
     @Volatile
     private var engagement: MdocNfcV2EngagementHelper? = null
 
@@ -225,6 +231,14 @@ abstract class MdocNfcV2Service(
         val eDeviceKey = Crypto.createEcPrivateKey(settings.sessionEncryptionCurve)
         val timeStarted = Clock.System.now()
 
+        val blePermissionsGranted = if (Build.VERSION.SDK_INT >= 31) {
+            ContextCompat.checkSelfPermission(applicationContext, Manifest.permission.BLUETOOTH_SCAN) ==
+                    PackageManager.PERMISSION_GRANTED
+        } else {
+            ContextCompat.checkSelfPermission(applicationContext, Manifest.permission.ACCESS_FINE_LOCATION) ==
+                    PackageManager.PERMISSION_GRANTED
+        }
+
         listenForCancellationFromUiJob = CoroutineScope(Dispatchers.IO).launch {
             settings.presentmentModel?.state?.collect { state ->
                 if (state == PresentmentModel.State.CanceledByUser) {
@@ -274,18 +288,26 @@ abstract class MdocNfcV2Service(
                 // We launch transactionJob in a new detached scope so it survives both
                 // NFC deactivation (the reader moving away) and the Service's onDestroy
                 // (as the transaction may continue over BLE and wait for UI consent).
+                if (transactionJob?.isActive == true) {
+                    Logger.i(TAG, "Transaction already in progress, ignoring duplicate handover")
+                    return@MdocNfcV2EngagementHelper
+                }
                 transactionJob = CoroutineScope(Dispatchers.IO + settings.promptModel).launch {
-                    hybridTransport!!.open(eDeviceKey.publicKey)
-                    val duration = Clock.System.now() - timeStarted
-                    startTransaction(
-                        transport = hybridTransport!!,
-                        settings = settings,
-                        connectionMethod = connectionMethod,
-                        encodedDeviceEngagement = encodedDeviceEngagement,
-                        handover = handover,
-                        eDeviceKey = eDeviceKey,
-                        engagementDuration = duration
-                    )
+                    try {
+                        hybridTransport!!.open(eDeviceKey.publicKey)
+                        val duration = Clock.System.now() - timeStarted
+                        startTransaction(
+                            transport = hybridTransport!!,
+                            settings = settings,
+                            connectionMethod = connectionMethod,
+                            encodedDeviceEngagement = encodedDeviceEngagement,
+                            handover = handover,
+                            eDeviceKey = eDeviceKey,
+                            engagementDuration = duration
+                        )
+                    } finally {
+                        transactionJob = null
+                    }
                 }
             },
             onMessageReceived = { message ->
@@ -305,6 +327,10 @@ abstract class MdocNfcV2Service(
                     for (prefix in settings.negotiatedHandoverPreferredOrder) {
                         for (connectionMethod in connectionMethods) {
                             if (connectionMethod.toString().startsWith(prefix)) {
+                                if (prefix.startsWith("ble") && !blePermissionsGranted) {
+                                    Logger.w(TAG, "Method $connectionMethod requested but BLE permissions not granted. Skipping.")
+                                    continue
+                                }
                                 return@MdocNfcV2EngagementHelper connectionMethod
                             }
                         }

@@ -1,8 +1,11 @@
 package org.multipaz.compose.mdoc
 
+import android.Manifest
 import android.app.Activity
 import android.content.Context
 import android.content.Intent
+import android.content.pm.PackageManager
+import android.os.Build
 import android.os.Bundle
 import android.os.VibrationEffect
 import android.os.Vibrator
@@ -64,6 +67,11 @@ abstract class MdocNdefService(
 ) : NfcApduService(applicationContext, sendResponse) {
     companion object {
         private const val TAG = "MdocNdefService"
+
+        // A job started after NFC engagement completes successfully and
+        // runs until the remote reader disconnects.
+        // This is static to survive service recreations during a single tap session.
+        private var transactionJob: Job? = null
     }
 
     private fun vibrate(pattern: List<Int>) {
@@ -100,8 +108,6 @@ abstract class MdocNdefService(
 
     // A job started after NFC engagement completes successfully and
     // runs until the remote reader disconnects.
-    private var transactionJob: Job? = null
-
     @Volatile
     private var engagement: MdocNfcEngagementHelper? = null
 
@@ -234,6 +240,14 @@ abstract class MdocNdefService(
         val eDeviceKey = Crypto.createEcPrivateKey(settings.sessionEncryptionCurve)
         val timeStarted = Clock.System.now()
 
+        val blePermissionsGranted = if (Build.VERSION.SDK_INT >= 31) {
+            ContextCompat.checkSelfPermission(applicationContext, Manifest.permission.BLUETOOTH_SCAN) ==
+                    PackageManager.PERMISSION_GRANTED
+        } else {
+            ContextCompat.checkSelfPermission(applicationContext, Manifest.permission.ACCESS_FINE_LOCATION) ==
+                    PackageManager.PERMISSION_GRANTED
+        }
+
         listenForCancellationFromUiJob = CoroutineScope(Dispatchers.IO).launch {
             settings.presentmentModel?.state?.collect { state ->
                 if (state == PresentmentModel.State.CanceledByUser) {
@@ -248,9 +262,14 @@ abstract class MdocNdefService(
 
         fun negotiatedHandoverPicker(connectionMethods: List<MdocConnectionMethod>): MdocConnectionMethod {
             Logger.i(TAG, "Negotiated Handover available methods: $connectionMethods")
+
             for (prefix in settings.negotiatedHandoverPreferredOrder) {
                 for (connectionMethod in connectionMethods) {
                     if (connectionMethod.toString().startsWith(prefix)) {
+                        if (prefix.startsWith("ble") && !blePermissionsGranted) {
+                            Logger.w(TAG, "Method $connectionMethod requested but BLE permissions not granted. Skipping.")
+                            continue
+                        }
                         Logger.i(TAG, "Using method $connectionMethod")
                         return connectionMethod
                     }
@@ -271,7 +290,7 @@ abstract class MdocNdefService(
         if (!settings.useNegotiatedHandover) {
             staticHandoverConnectionMethods = mutableListOf<MdocConnectionMethod>()
             val bleUuid = UUID.randomUUID()
-            if (settings.staticHandoverBleCentralClientModeEnabled) {
+            if (settings.staticHandoverBleCentralClientModeEnabled && blePermissionsGranted) {
                 staticHandoverConnectionMethods.add(
                     MdocConnectionMethodBle(
                         supportsPeripheralServerMode = false,
@@ -281,7 +300,7 @@ abstract class MdocNdefService(
                     )
                 )
             }
-            if (settings.staticHandoverBlePeripheralServerModeEnabled) {
+            if (settings.staticHandoverBlePeripheralServerModeEnabled && blePermissionsGranted) {
                 staticHandoverConnectionMethods.add(
                     MdocConnectionMethodBle(
                         supportsPeripheralServerMode = true,
@@ -327,16 +346,24 @@ abstract class MdocNdefService(
                 // We launch transactionJob in a new detached scope so it survives both
                 // NFC deactivation (the reader moving away) and the Service's onDestroy
                 // (as the transaction may continue over BLE and wait for UI consent).
+                if (transactionJob?.isActive == true) {
+                    Logger.i(TAG, "Transaction already in progress, ignoring duplicate handover")
+                    return@MdocNfcEngagementHelper
+                }
                 transactionJob = CoroutineScope(Dispatchers.IO + settings.promptModel).launch {
-                    val duration = Clock.System.now() - timeStarted
-                    startTransaction(
-                        settings = settings,
-                        connectionMethods = connectionMethods,
-                        encodedDeviceEngagement = encodedDeviceEngagement,
-                        handover = handover,
-                        eDeviceKey = eDeviceKey,
-                        engagementDuration = duration
-                    )
+                    try {
+                        val duration = Clock.System.now() - timeStarted
+                        startTransaction(
+                            settings = settings,
+                            connectionMethods = connectionMethods,
+                            encodedDeviceEngagement = encodedDeviceEngagement,
+                            handover = handover,
+                            eDeviceKey = eDeviceKey,
+                            engagementDuration = duration
+                        )
+                    } finally {
+                        transactionJob = null
+                    }
                 }
             },
             onError = { error ->
@@ -362,42 +389,46 @@ abstract class MdocNdefService(
         eDeviceKey: EcPrivateKey,
         engagementDuration: Duration,
     ) {
-        Logger.i(TAG, "startEngagement - advertising and waiting for connection")
-        val transports = connectionMethods.advertise(
-            role = MdocRole.MDOC,
-            transportFactory = MdocTransportFactory.Default,
-            options = settings.transportOptions,
-        )
-        val transport = transports.waitForConnection(
-            eSenderKey = eDeviceKey.publicKey,
-        )
+        try {
+            Logger.i(TAG, "startEngagement - advertising and waiting for connection")
+            val transports = connectionMethods.advertise(
+                role = MdocRole.MDOC,
+                transportFactory = MdocTransportFactory.Default,
+                options = settings.transportOptions,
+            )
+            val transport = transports.waitForConnection(
+                eSenderKey = eDeviceKey.publicKey,
+            )
 
-        val context = currentCoroutineContext()
-        val monitorJob = CoroutineScope(context).launch {
-            transport.state.collect { state ->
-                if (state == MdocTransport.State.FAILED || state == MdocTransport.State.CLOSED) {
-                    context.cancel(CancellationException("Transport $state"))
+            val context = currentCoroutineContext()
+            val monitorJob = CoroutineScope(context).launch {
+                transport.state.collect { state ->
+                    if (state == MdocTransport.State.FAILED || state == MdocTransport.State.CLOSED) {
+                        context.cancel(CancellationException("Transport $state"))
+                    }
                 }
             }
-        }
 
-        try {
-            settings.presentmentModel?.setConnecting()
-            Iso18013Presentment(
-                transport = transport,
-                eDeviceKey = eDeviceKey,
-                deviceEngagement = Cbor.decode(encodedDeviceEngagement.toByteArray()),
-                handover = handover,
-                source = settings.source,
-                keyAgreementPossible = listOf(eDeviceKey.curve),
-                onWaitingForRequest = { settings.presentmentModel?.setWaitingForReader() },
-                onWaitingForUserInput = { settings.presentmentModel?.setWaitingForUserInput() },
-                onDocumentsInFocus = { documents ->
-                    settings.presentmentModel?.setDocumentsSelected(selectedDocuments = documents)
-                },
-                onSendingResponse = { settings.presentmentModel?.setSending() }
-            )
-            settings.presentmentModel?.setCompleted(null)
+            try {
+                settings.presentmentModel?.setConnecting()
+                Iso18013Presentment(
+                    transport = transport,
+                    eDeviceKey = eDeviceKey,
+                    deviceEngagement = Cbor.decode(encodedDeviceEngagement.toByteArray()),
+                    handover = handover,
+                    source = settings.source,
+                    keyAgreementPossible = listOf(eDeviceKey.curve),
+                    onWaitingForRequest = { settings.presentmentModel?.setWaitingForReader() },
+                    onWaitingForUserInput = { settings.presentmentModel?.setWaitingForUserInput() },
+                    onDocumentsInFocus = { documents ->
+                        settings.presentmentModel?.setDocumentsSelected(selectedDocuments = documents)
+                    },
+                    onSendingResponse = { settings.presentmentModel?.setSending() }
+                )
+                settings.presentmentModel?.setCompleted(null)
+            } finally {
+                monitorJob.cancel()
+            }
         } catch (e: Exception) {
             Logger.w(TAG, "Caught error while performing 18013-5 transaction", e)
             if (e is CancellationException) {
@@ -406,7 +437,6 @@ abstract class MdocNdefService(
                 settings.presentmentModel?.setCompleted(e)
             }
         } finally {
-            monitorJob.cancel()
             listenForCancellationFromUiJob?.cancel()
             listenForCancellationFromUiJob = null
         }
